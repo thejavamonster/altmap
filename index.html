@@ -142,10 +142,8 @@
         
         // Predefined colors for affiliations
         const colorPalette = [
-            '#ffc000', '#ab2bd6', '#2cc71c', '#91e887', '#a5fffc',
-            '#de2424', '#f28787', '#259ede', '#88bbf2', '#bfbfbf',
-            '#F8C471', '#82E0AA', '#F1948A', '#AED6F1', '#A3E4D7',
-            '#D5DBDB', '#F9E79F', '#D7BDE2', '#2cc71c', '#91e887'
+            '#259ede', '#88bbf2', '#ffc000', '#ab2bd6', '#2cc71c',
+            '#91e887', '#a5fffc', '#de2424', '#f28787', '#bfbfbf'
         ];
         
         // fixing errors
@@ -168,6 +166,12 @@
         // Function to get display name for country
         function getCountryDisplayName(originalName) {
             return countryNameMap[originalName] || originalName;
+        }
+        
+        // Function to format numbers with commas
+        function formatNumber(num) {
+            if (!num || num === 'Unknown') return num;
+            return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
         }
         
         // Generate colors for affiliations
@@ -271,12 +275,23 @@
             let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
             
             geojson.features.forEach(feature => {
-                if (feature.geometry && feature.geometry.type === 'Polygon') {
-                    feature.geometry.coordinates[0].forEach(coord => {
-                        minX = Math.min(minX, coord[0]);
-                        minY = Math.min(minY, coord[1]);
-                        maxX = Math.max(maxX, coord[0]);
-                        maxY = Math.max(maxY, coord[1]);
+                if (feature.geometry && (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon')) {
+                    let polygons = [];
+                    if (feature.geometry.type === 'Polygon') {
+                        polygons = [feature.geometry.coordinates];
+                    } else if (feature.geometry.type === 'MultiPolygon') {
+                        polygons = feature.geometry.coordinates;
+                    }
+                    
+                    polygons.forEach(polygon => {
+                        if (polygon && polygon[0]) {
+                            polygon[0].forEach(coord => {
+                                minX = Math.min(minX, coord[0]);
+                                minY = Math.min(minY, coord[1]);
+                                maxX = Math.max(maxX, coord[0]);
+                                maxY = Math.max(maxY, coord[1]);
+                            });
+                        }
                     });
                 }
             });
@@ -293,28 +308,44 @@
             // Render each country
             let validFeatures = 0;
             geojson.features.forEach((feature, index) => {
-                if (feature.geometry && feature.geometry.type === 'Polygon' && feature.geometry.coordinates && feature.geometry.coordinates[0]) {
-                    const convertedCoords = convertCoords(feature.geometry.coordinates[0], bounds, svgRect.width, svgRect.height);
-                    const pathData = createPath(convertedCoords);
+                if (feature.geometry && (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon') && feature.geometry.coordinates) {
                     
-                    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-                    path.setAttribute('d', pathData);
-                    path.setAttribute('class', 'country');
+                    // Handle both Polygon and MultiPolygon
+                    let polygons = [];
+                    if (feature.geometry.type === 'Polygon') {
+                        polygons = [feature.geometry.coordinates];
+                    } else if (feature.geometry.type === 'MultiPolygon') {
+                        polygons = feature.geometry.coordinates;
+                    }
                     
-                    // Set color based on affiliation
-                    const affiliation = feature.properties?.Affill || 'Unknown';
-                    const fillColor = affiliationColors[affiliation] || '#CCCCCC';
-                    path.style.fill = fillColor;
+                    // Create a path for each polygon part
+                    polygons.forEach((polygon, polygonIndex) => {
+                        if (polygon && polygon[0]) {
+                            const convertedCoords = convertCoords(polygon[0], bounds, svgRect.width, svgRect.height);
+                            const pathData = createPath(convertedCoords);
+                            
+                            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                            path.setAttribute('d', pathData);
+                            path.setAttribute('class', 'country');
+                            
+                            // Set color based on affiliation
+                            const affiliation = feature.properties?.Affill || 'Unknown';
+                            const fillColor = affiliationColors[affiliation] || '#CCCCCC';
+                            path.style.fill = fillColor;
+                            
+                            path.setAttribute('data-name', feature.properties?.Name || `Country ${index + 1}`);
+                            path.setAttribute('data-affill', affiliation);
+                            path.setAttribute('data-population', feature.properties?.Population || 'Unknown');
+                            
+                            // Mouse events for tooltip
+                            path.addEventListener('mouseenter', showTooltip);
+                            path.addEventListener('mouseleave', hideTooltip);
+                            path.addEventListener('mousemove', updateTooltip);
+                            
+                            mapGroup.appendChild(path);
+                        }
+                    });
                     
-                    path.setAttribute('data-name', feature.properties?.Name || `Country ${index + 1}`);
-                    path.setAttribute('data-affill', affiliation);
-                    
-                    // Mouse events for tooltip
-                    path.addEventListener('mouseenter', showTooltip);
-                    path.addEventListener('mouseleave', hideTooltip);
-                    path.addEventListener('mousemove', updateTooltip);
-                    
-                    mapGroup.appendChild(path);
                     validFeatures++;
                 } else {
                     console.warn(`Skipping feature ${index} - invalid or null geometry:`, feature);
@@ -340,6 +371,7 @@
             tooltip.innerHTML = `
                 <strong>${getCountryDisplayName(name)}</strong><br>
                 Affiliation: ${getDisplayName(affill)}<br>
+                Population: ${formatNumber(population)}
             `;
             tooltip.style.display = 'block';
             updateTooltip(event);
@@ -450,7 +482,7 @@
             console.log('Loading default map...');
             
             try {
-                const response = await fetch('map_v5.zip');
+                const response = await fetch('map_v7.zip');
                 if (response.ok) {
                     const arrayBuffer = await response.arrayBuffer();
                     const geojson = await shp(arrayBuffer);
